@@ -11,16 +11,41 @@
 
 <script setup lang="ts">
     import {ref} from 'vue';
+    import { onMounted } from 'vue'
+    import { socket } from '../socket'
+
     const handle = ref('');
     const name = ref('');
     const pronouns = ref('');
+    const deskX = ref<number | null>(null)
+    const deskY = ref<number | null>(null)  
 
     if (localStorage.getItem('analystInfo')) {
         const analystInfo = JSON.parse(localStorage.getItem('analystInfo')!);
         handle.value = analystInfo.handle || '';
         name.value = analystInfo.name || '';
         pronouns.value = analystInfo.pronouns || '';
+        deskX.value = analystInfo.deskLocation?.x || null;
+        deskY.value = analystInfo.deskLocation?.y || null;
     }
+
+    onMounted(() => {
+      socket.on('connect', () => {
+      console.log('Connected to backend:', socket.id)
+
+
+      socket.emit('register-analyst', {
+          handle: handle.value,
+          name: name.value,
+          pronouns: pronouns.value,
+          deskLocation: {
+            x: deskX.value,
+            y: deskY.value
+          },
+          priority: 2, // Default priority
+        })
+      })
+    })
 
 </script>
 

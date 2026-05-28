@@ -27,28 +27,69 @@
       <h2>Floor Location</h2>
       <h4 style="margin: 5px; font-weight: normal;">Double click on the map where you're seated so consult givers know where to find you.</h4>
     </div>
-    <img src="../assets/MapPlaceholder.png" alt="Map Placeholder" style="margin-top: 20px; max-width: 100%; height: auto;" />
+
+    <div class="map-wrapper">
+      <img 
+        src="../assets/MapPlaceholder.png" 
+        alt="Floor Map" 
+        class="floor-map"
+        @dblclick="selectDeskLocation"
+      />
+
+    <div 
+      v-if="deskX !== null && deskY !== null"
+      class="desk-marker"
+      :style="{
+        left: `${deskX * 100}%`,
+        top: `${deskY * 100}%`
+        }"
+    >🎯</div>
+    </div>
+
+
+
 
     <div class="center" style="margin-top: 20px;">
+      <p style="margin-bottom: 15px">You can change this information at any time by hitting the settings icon on the top right of the home page.</p>
       <button type="submit" form="analyst-form" style="padding: 15px 50px; font-size: 18px;">
         Save
       </button>
-      <p v-if="status">{{ status }}</p>
     </div>
   </section>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import {onMounted, ref} from 'vue';
 
 const handle = ref('');
 const name = ref('');
 const pronouns = ref('');
-const status = ref('');
+const deskX = ref<number | null>(null)
+const deskY = ref<number | null>(null)
+
 
 const notificationStatus = ref('');
 
 const emit = defineEmits(['infoSaved'])
+
+function selectDeskLocation(event: MouseEvent) {
+  const image = event.currentTarget as HTMLImageElement
+  const rect = image.getBoundingClientRect()
+
+  const clickX = event.clientX - rect.left
+  const clickY = event.clientY - rect.top
+
+  const xPercent = clickX / rect.width
+  const yPercent = clickY / rect.height
+
+  deskX.value = xPercent
+  deskY.value = yPercent
+
+  console.log('Desk location:', {
+    x: xPercent,
+    y: yPercent,
+  })
+}
 
 
 async function enableNotifications() {
@@ -76,18 +117,37 @@ onMounted(() => {
   } else {
     notificationStatus.value = ''
   }
+
+  const savedAnalyst = localStorage.getItem('analystInfo')
+
+  if (savedAnalyst) {
+    const analyst = JSON.parse(savedAnalyst)
+
+    handle.value = analyst.handle
+    name.value = analyst.name
+    pronouns.value = analyst.pronouns
+
+    deskX.value = analyst.deskLocation?.x
+    deskY.value = analyst.deskLocation?.y
+  }
 })
 
 
 function saveInfo() {
-  // Save info locally and send to server (eventually when I code that)
+  if (deskX.value === null || deskY.value === null) {
+    alert('Please select your floor location on the map.')
+  return
+  }
 
   const user = {
   handle: handle.value,
   name: name.value,
-  pronouns: pronouns.value
+  pronouns: pronouns.value,
+  deskLocation: {
+    x: deskX.value,
+    y: deskY.value
+    }
   }
-
   console.log('User info to save:', user)
   localStorage.setItem('analystInfo', JSON.stringify(user))
   emit('infoSaved')
@@ -155,4 +215,32 @@ button {
 button:hover {
   background-color: #272727;
 }
+
+.map-wrapper {
+  position: relative;
+  display: inline-block;
+  margin-top: 20px;
+  max-width: 100%;
+}
+
+.floor-map {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  cursor: crosshair;
+}
+
+.desk-marker {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-size: 28px;
+  color: #111;
+  pointer-events: none;
+}
+
+.helper-text {
+  margin: 5px;
+  font-weight: normal;
+}
+
 </style>
