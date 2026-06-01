@@ -66,6 +66,7 @@ const name = ref('');
 const pronouns = ref('');
 const deskX = ref<number | null>(null)
 const deskY = ref<number | null>(null)
+const priority = ref(2)
 
 
 const notificationStatus = ref('');
@@ -129,6 +130,7 @@ onMounted(() => {
 
     deskX.value = analyst.deskLocation?.x
     deskY.value = analyst.deskLocation?.y
+    priority.value = analyst.priority ?? 2
   }
 })
 
@@ -139,17 +141,18 @@ function saveInfo() {
   return
   }
 
-  const user = {
+  const analyst = {
   handle: handle.value,
   name: name.value,
   pronouns: pronouns.value,
+  priority: priority.value,
   deskLocation: {
     x: deskX.value,
     y: deskY.value
     }
   }
-  console.log('User info to save:', user)
-  localStorage.setItem('analystInfo', JSON.stringify(user))
+  console.log('Analyst info to save:', analyst)
+  localStorage.setItem('analystInfo', JSON.stringify(analyst))
   emit('infoSaved')
 }
 </script>

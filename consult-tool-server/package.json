@@ -2,10 +2,10 @@
   "name": "consult-tool-server",
   "version": "1.0.0",
   "description": "",
-  "main": "server.js",
+  "main": "server.ts",
   "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js"
+    "start": "node server.ts",
+    "dev": "nodemon server.ts"
   },
   "keywords": [],
   "author": "",
@@ -17,6 +17,11 @@
     "socket.io": "^4.2.0"
   },
   "devDependencies": {
-    "nodemon": "^3.1.14"
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.9.1",
+    "nodemon": "^3.1.14",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^6.0.3"
   }
 }
