@@ -5,6 +5,40 @@ import Homepage from './components/Homepage.vue'
 import { socket } from './socket'
 import type { AnalystInfo as AnalystInfoType } from '../../shared/types'
 
+type IncomingConsultRequest = {
+  requestId: string
+  requesterName: string
+  requesterLocX?: number | null
+  requesterLocY?: number | null
+  topic: string
+}
+
+type ConsultRequestStatus =
+  | { status: 'idle' }
+  | { status: 'requested'; requestId?: string }
+  | { status: 'no-available' }
+  | {
+    status: 'ongoing'
+    requestId: string
+    topic: string
+    startedAt: string
+    analyst: AnalystInfoType & { socketId: string }
+  }
+  | { status: 'completed'; requestId: string; completedAt: string }
+
+type GivenConsultStatus =
+  | { status: 'idle' }
+  | {
+    status: 'ongoing'
+    requestId: string
+    requesterName: string
+    requesterLocX?: number | null
+    requesterLocY?: number | null
+    topic: string
+    startedAt: string
+  }
+  | { status: 'completed'; requestId: string }
+
 const analyst = ref<AnalystInfoType | null>(null)
 
 const handle = ref('');
@@ -13,8 +47,11 @@ const pronouns = ref('');
 const deskX = ref<number | null>(null)
 const deskY = ref<number | null>(null)  
 const priority = ref(2)
-const incomingConsultRequest = ref(null)
-const consultRequestStatus = ref({ status: 'idle' })
+const incomingConsultRequest = ref<IncomingConsultRequest | null>(null)
+const consultRequestStatus = ref<ConsultRequestStatus>({ status: 'idle' })
+const givenConsultStatus = ref<GivenConsultStatus>({ status: 'idle' })
+const notifiedRequestIds = new Set<string>()
+let consultCompletedTimeout: ReturnType<typeof setTimeout> | null = null
 
 const analystExists = ref(false)
 
@@ -50,6 +87,10 @@ function handleInfoSaved() {
   }
 
   analystExists.value = true
+
+  if (socket.connected && handle.value) {
+    registerAnalystOnServer()
+  }
 }
 
 function handlePriorityChanged(newPriority: number) {
@@ -75,23 +116,77 @@ function openSettings() {
   analystExists.value = false
 }
 
+function notifyConsultRequest(request: IncomingConsultRequest) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') {
+    return
+  }
+
+  if (notifiedRequestIds.has(request.requestId)) {
+    return
+  }
+
+  notifiedRequestIds.add(request.requestId)
+
+  const notification = new Notification('Consult Request', {
+    body: `${request.requesterName} has requested a consult on ${request.topic}.`,
+    tag: request.requestId
+  })
+
+  notification.onclick = () => {
+    window.focus()
+    notification.close()
+  }
+}
+
 
 onMounted(() => {
+  socket.off('connect')
+  socket.off('consult-requested')
+  socket.off('consult-request-expired')
+  socket.off('consult-request-status')
+  socket.off('consult-giver-state')
+
   socket.on('connect', () => {
     console.log('Connected to backend:', socket.id)
 
-    if(handle.value !== null){
+    if(handle.value){
       registerAnalystOnServer()
     }
+  })
 
-    socket.on('consult-requested', (request) => {
-      incomingConsultRequest.value = request
-    })
+  if (socket.connected && handle.value) {
+    registerAnalystOnServer()
+  }
 
-    socket.on('consult-request-status', (status) => {
-      consultRequestStatus.value = status
-    })
-  
+  socket.on('consult-requested', (request: IncomingConsultRequest) => {
+    incomingConsultRequest.value = request
+    notifyConsultRequest(request)
+  })
+
+  socket.on('consult-request-expired', ({ requestId }) => {
+    if (incomingConsultRequest.value?.requestId === requestId) {
+      incomingConsultRequest.value = null
+    }
+  })
+
+  socket.on('consult-request-status', (status: ConsultRequestStatus) => {
+    if (consultCompletedTimeout) {
+      clearTimeout(consultCompletedTimeout)
+      consultCompletedTimeout = null
+    }
+
+    consultRequestStatus.value = status
+
+    if (status.status === 'completed') {
+      consultCompletedTimeout = setTimeout(() => {
+        consultRequestStatus.value = { status: 'idle' }
+        consultCompletedTimeout = null
+      }, 5000)
+    }
+  })
+
+  socket.on('consult-giver-state', (status: GivenConsultStatus) => {
+    givenConsultStatus.value = status
   })
 })
 
@@ -109,8 +204,12 @@ function registerAnalystOnServer() {
 }
 
 function handlePingRequest(topic: string) {
+  consultRequestStatus.value = { status: 'requested' }
   socket.emit('request-consult', {
     requesterName: name.value,
+    requesterHandle: handle.value,
+    requesterLocX: deskX.value,
+    requesterLocY: deskY.value,
     topic,
   })
 }
@@ -123,6 +222,16 @@ function handleConsultResponse(requestId:string, accepted:boolean){
   incomingConsultRequest.value = null
 } 
 
+function clearConsultRequestStatus() {
+  consultRequestStatus.value = { status: 'idle' }
+}
+
+function handleCompleteConsult(requestId: string) {
+  socket.emit('complete-consult', {
+    requestId,
+  })
+}
+
 </script>
 
 <template>
@@ -134,10 +243,14 @@ function handleConsultResponse(requestId:string, accepted:boolean){
       :handle="handle"
       :priority="priority"
       :incomingConsultRequest="incomingConsultRequest"
+      :consultRequestStatus="consultRequestStatus"
+      :givenConsultStatus="givenConsultStatus"
       @priorityChanged="handlePriorityChanged"
       @openSettings="openSettings"
       @requestPing="handlePingRequest"
       @consultResponse="handleConsultResponse"
+      @clearConsultRequestStatus="clearConsultRequestStatus"
+      @completeConsult="handleCompleteConsult"
     />
   </div>
 </template>
@@ -147,6 +260,8 @@ function handleConsultResponse(requestId:string, accepted:boolean){
 .center-container {
   display: flex;
   justify-content: center;
+  width: 100%;
+  min-height: 100vh;
 }
 
 </style>

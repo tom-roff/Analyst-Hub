@@ -1,0 +1,2 @@
+id,state,requester socket id,requester handle,requester name,requester location x,requester location y,giver socket id,giver handle,topic,start time,end time,attempted analyst count,attempted socket ids
+"4d36f75d-e277-4fbd-b2e3-c1fe36ef94bf","completed","LCvemhZ2p1XP4mSuAAAE","azhang","Arvin Zhang","0.3580111878496203","0.4689952126002096","Sf1UQncgr2DxV05NAAAB","troff","Test","2026-06-03T01:38:58.297Z","2026-06-03T01:40:40.690Z","1","Sf1UQncgr2DxV05NAAAB"

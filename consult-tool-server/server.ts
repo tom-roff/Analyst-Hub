@@ -4,18 +4,400 @@ import { Server } from 'socket.io'
 import cors from 'cors'
 import type { AnalystInfo, ConsultRequest } from '../shared/types'
 import { randomUUID } from 'crypto'
+import fs from 'fs'
+import path from 'path'
 
 type OnlineAnalyst = AnalystInfo & {
   socketId: string;
+  busy: boolean;
+  cooldownTimeout: ReturnType<typeof setTimeout> | null;
 }
 
 
 
 const consultRequests = new Map<string, ConsultRequest>()
+const consultLogPath = path.join(__dirname, 'consults.csv')
 
 const app = express()
 app.use(cors())
 app.use(express.json())
+
+const priorityTierLabels = [
+  'Designated Consulter',
+  'High',
+  'Normal',
+  'Low',
+  'Do Not Disturb',
+]
+
+function escapeCsvValue(value: string | null) {
+  return `"${String(value ?? '').replace(/"/g, '""')}"`
+}
+
+function ensureConsultLogExists() {
+  if (!fs.existsSync(consultLogPath)) {
+    fs.writeFileSync(
+      consultLogPath,
+      'id,state,requester socket id,requester handle,requester name,requester location x,requester location y,giver socket id,giver handle,topic,start time,end time,attempted analyst count,attempted socket ids\n',
+      'utf8',
+    )
+  }
+}
+
+function logCompletedConsult(request: ConsultRequest) {
+  ensureConsultLogExists()
+
+  const row = [
+    request.id,
+    request.state,
+    request.requesterSocketId,
+    request.requesterHandle,
+    request.requesterName,
+    request.requesterLocX === null ? null : String(request.requesterLocX),
+    request.requesterLocY === null ? null : String(request.requesterLocY),
+    request.giverSocketId,
+    request.giverHandle,
+    request.topic,
+    request.startedAt,
+    request.completedAt,
+    String(request.attemptedSocketIds.size),
+    Array.from(request.attemptedSocketIds).join(';'),
+  ].map(escapeCsvValue).join(',')
+
+  fs.appendFileSync(consultLogPath, `${row}\n`, 'utf8')
+}
+
+function getDashboardStatus() {
+  const allAnalysts = onlineAnalysts.flat()
+  const busyAnalysts = allAnalysts.filter((analyst) => analyst.busy).length
+  const consults = Array.from(consultRequests.values())
+
+  return {
+    summary: {
+      totalAnalysts: allAnalysts.length,
+      availableAnalysts: allAnalysts.length - busyAnalysts,
+      busyAnalysts,
+      activeConsults: consults.length,
+      requestedConsults: consults.filter((request) => request.state === 'requested').length,
+      ongoingConsults: consults.filter((request) => request.state === 'ongoing').length,
+    },
+    analystsByTier: onlineAnalysts.map((analysts, index) => ({
+      tier: index,
+      label: priorityTierLabels[index],
+      analysts: analysts.map((analyst) => ({
+        socketId: analyst.socketId,
+        handle: analyst.handle,
+        name: analyst.name,
+        pronouns: analyst.pronouns,
+        priority: analyst.priority,
+        busy: analyst.busy,
+        deskLocation: analyst.deskLocation,
+      })),
+    })),
+    consults: consults.map((request) => ({
+      id: request.id,
+      state: request.state,
+      requesterSocketId: request.requesterSocketId,
+      requesterHandle: request.requesterHandle,
+      requesterName: request.requesterName,
+      requesterLocation: {
+        x: request.requesterLocX,
+        y: request.requesterLocY,
+      },
+      topic: request.topic,
+      currentCandidateSocketId: request.currentCandidateSocketId,
+      giverSocketId: request.giverSocketId,
+      giverHandle: request.giverHandle,
+      startedAt: request.startedAt,
+      completedAt: request.completedAt,
+      attemptedCount: request.attemptedSocketIds.size,
+    })),
+  }
+}
+
+app.get('/api/status', (_req, res) => {
+  res.json(getDashboardStatus())
+})
+
+app.get('/', (_req, res) => {
+  res.type('html').send(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Consult Tool Dashboard</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: Roboto, Arial, sans-serif;
+        background: #202020;
+        color: #f7f7f7;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at top left, rgb(139 30 30 / 20%), transparent 32rem),
+          linear-gradient(180deg, #2f2f2f 0%, #202020 100%);
+      }
+
+      header {
+        padding: 1.5rem 2rem;
+        border-bottom: 1px solid rgb(255 255 255 / 12%);
+        background-color: rgb(24 24 24 / 88%);
+        position: sticky;
+        top: 0;
+        z-index: 2;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: 1.75rem;
+      }
+
+      main {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 420px;
+        gap: 1rem;
+        padding: 1rem;
+        align-items: start;
+      }
+
+      section {
+        border: 1px solid rgb(255 255 255 / 10%);
+        border-radius: 6px;
+        background-color: rgb(255 255 255 / 7%);
+        padding: 1rem;
+      }
+
+      .tiers {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(220px, 1fr));
+        gap: 1rem;
+        margin-top: 1rem;
+        overflow-x: auto;
+        padding-bottom: 0.25rem;
+      }
+
+      .tier,
+      .consult {
+        border: 1px solid rgb(255 255 255 / 10%);
+        border-radius: 6px;
+        background: rgb(0 0 0 / 18%);
+        padding: 0.875rem;
+      }
+
+      .tier {
+        max-height: calc(100vh - 260px);
+        min-height: 220px;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .tier h3 {
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-bottom: 0.75rem;
+        font-size: 1rem;
+        position: sticky;
+        top: 0;
+        background: #252525;
+        z-index: 1;
+        padding-bottom: 0.5rem;
+        border-bottom: 1px solid rgb(255 255 255 / 10%);
+      }
+
+      .analyst-list {
+        overflow-y: auto;
+        padding-right: 0.25rem;
+      }
+
+      .analyst {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 0.25rem 0.5rem;
+        align-items: center;
+        padding: 0.5rem 0;
+        border-top: 1px solid rgb(255 255 255 / 10%);
+        font-size: 0.9rem;
+      }
+
+      .analyst strong,
+      .analyst .muted {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .muted {
+        color: #bdbdbd;
+        font-size: 0.875rem;
+      }
+
+      .pill {
+        display: inline-flex;
+        width: fit-content;
+        padding: 0.2rem 0.5rem;
+        border-radius: 999px;
+        background: rgb(255 255 255 / 12%);
+        font-size: 0.8rem;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+
+      .summary {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        margin-top: 1rem;
+      }
+
+      .summary-card {
+        display: grid;
+        gap: 0.15rem;
+        min-width: 120px;
+        padding: 0.75rem;
+        border: 1px solid rgb(255 255 255 / 10%);
+        border-radius: 6px;
+        background: rgb(255 255 255 / 7%);
+      }
+
+      .summary-card strong {
+        font-size: 1.35rem;
+      }
+
+      .busy {
+        background: #8b1e1e;
+      }
+
+      .available {
+        background: #2f855a;
+      }
+
+      .consults {
+        display: grid;
+        gap: 0.75rem;
+        margin-top: 1rem;
+        max-height: calc(100vh - 220px);
+        overflow-y: auto;
+        padding-right: 0.25rem;
+      }
+
+      @media (max-width: 1200px) {
+        main {
+          grid-template-columns: 1fr;
+        }
+
+        .tier {
+          max-height: 420px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Consult Tool Dashboard</h1>
+      <p class="muted">Updates every 2 seconds</p>
+      <div id="summary" class="summary"></div>
+    </header>
+    <main>
+      <section>
+        <h2>Online Analysts</h2>
+        <div id="tiers" class="tiers"></div>
+      </section>
+      <section>
+        <h2>Active Consults</h2>
+        <div id="consults" class="consults"></div>
+      </section>
+    </main>
+    <script>
+      const tiersEl = document.getElementById('tiers')
+      const consultsEl = document.getElementById('consults')
+      const summaryEl = document.getElementById('summary')
+
+      function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+          '&': '&amp;',
+          '<': '&lt;',
+          '>': '&gt;',
+          '"': '&quot;',
+          "'": '&#039;',
+        })[char])
+      }
+
+      function renderAnalyst(analyst) {
+        const statusClass = analyst.busy ? 'busy' : 'available'
+        const statusText = analyst.busy ? 'Busy' : 'Available'
+
+        return \`
+          <div class="analyst">
+            <strong title="\${escapeHtml(analyst.name || analyst.handle)}">\${escapeHtml(analyst.name || analyst.handle)}</strong>
+            <span class="pill \${statusClass}">\${statusText}</span>
+            <span class="muted" title="@\${escapeHtml(analyst.handle)} \${escapeHtml(analyst.pronouns)}">@\${escapeHtml(analyst.handle)} \${escapeHtml(analyst.pronouns)}</span>
+            <span class="muted">Loc: \${escapeHtml(analyst.deskLocation?.x ?? 'n/a')}, \${escapeHtml(analyst.deskLocation?.y ?? 'n/a')}</span>
+          </div>
+        \`
+      }
+
+      function renderConsult(consult) {
+        return \`
+          <div class="consult">
+            <strong>\${escapeHtml(consult.topic)}</strong>
+            <p class="muted">State: \${escapeHtml(consult.state)}</p>
+            <p class="muted">Requester: \${escapeHtml(consult.requesterName)}</p>
+            <p class="muted">Candidate socket: \${escapeHtml(consult.currentCandidateSocketId ?? 'none')}</p>
+            <p class="muted">Giver socket: \${escapeHtml(consult.giverSocketId ?? 'none')}</p>
+            <p class="muted">Attempted analysts: \${escapeHtml(consult.attemptedCount)}</p>
+            <p class="muted">Started: \${consult.startedAt ? new Date(consult.startedAt).toLocaleTimeString() : 'not started'}</p>
+          </div>
+        \`
+      }
+
+      async function refresh() {
+        const response = await fetch('/api/status')
+        const status = await response.json()
+
+        summaryEl.innerHTML = \`
+          <div class="summary-card"><strong>\${status.summary.totalAnalysts}</strong><span class="muted">Analysts</span></div>
+          <div class="summary-card"><strong>\${status.summary.availableAnalysts}</strong><span class="muted">Available</span></div>
+          <div class="summary-card"><strong>\${status.summary.busyAnalysts}</strong><span class="muted">Busy</span></div>
+          <div class="summary-card"><strong>\${status.summary.activeConsults}</strong><span class="muted">Active consults</span></div>
+          <div class="summary-card"><strong>\${status.summary.requestedConsults}</strong><span class="muted">Requested</span></div>
+          <div class="summary-card"><strong>\${status.summary.ongoingConsults}</strong><span class="muted">Ongoing</span></div>
+        \`
+
+        tiersEl.innerHTML = status.analystsByTier.map((tier) => \`
+          <article class="tier">
+            <h3>
+              <span>\${escapeHtml(tier.label)}</span>
+              <span class="muted">\${tier.analysts.length}</span>
+            </h3>
+            <div class="analyst-list">
+              \${tier.analysts.length ? tier.analysts.map(renderAnalyst).join('') : '<p class="muted">No analysts</p>'}
+            </div>
+          </article>
+        \`).join('')
+
+        consultsEl.innerHTML = status.consults.length
+          ? status.consults.map(renderConsult).join('')
+          : '<p class="muted">No active consults</p>'
+      }
+
+      refresh()
+      setInterval(refresh, 2000)
+    </script>
+  </body>
+</html>`)
+})
 
 const server = http.createServer(app)
 
@@ -27,6 +409,8 @@ const io = new Server(server, {
 })
 
 const onlineAnalysts: OnlineAnalyst[][] = [[], [], [], [], []]
+const CONSULT_COOLDOWN_ENABLED = false
+const CONSULT_COOLDOWN_MS = 5 * 60 * 1000
 
 function getPriorityTier(priority: number) {
   return priority >= 0 && priority <= 4 ? priority : 2
@@ -53,12 +437,119 @@ function addAnalyst(analyst: OnlineAnalyst) {
   })
 }
 
+function setAnalystBusy(socketId: string, busy: boolean) {
+  const analyst = findAnalyst(socketId)
+
+  if (analyst) {
+    analyst.busy = busy
+  }
+}
+
+function startAnalystCooldown(socketId: string) {
+  const analyst = findAnalyst(socketId)
+
+  if (!analyst) {
+    return
+  }
+
+  if (!CONSULT_COOLDOWN_ENABLED) {
+    analyst.busy = false
+    return
+  }
+
+  analyst.busy = true
+
+  if (analyst.cooldownTimeout) {
+    clearTimeout(analyst.cooldownTimeout)
+  }
+
+  analyst.cooldownTimeout = setTimeout(() => {
+    const cooledAnalyst = findAnalyst(socketId)
+
+    if (cooledAnalyst) {
+      cooledAnalyst.busy = false
+      cooledAnalyst.cooldownTimeout = null
+    }
+
+    console.log('Online analysts:', onlineAnalysts)
+  }, CONSULT_COOLDOWN_MS)
+}
+
+function findAnalyst(socketId: string) {
+  for (const priorityTier of onlineAnalysts) {
+    const analyst = priorityTier.find((onlineAnalyst) => onlineAnalyst.socketId === socketId)
+
+    if (analyst) {
+      return analyst
+    }
+  }
+
+  return null
+}
+
+function removeAnalystByHandle(handle: string) {
+  for (const priorityTier of onlineAnalysts) {
+    const analystIndex = priorityTier.findIndex((analyst) => analyst.handle === handle)
+
+    if (analystIndex !== -1) {
+      return priorityTier.splice(analystIndex, 1)[0]
+    }
+  }
+
+  return null
+}
+
+function stopConsultRequest(request: ConsultRequest) {
+  if (request.timeout) {
+    clearTimeout(request.timeout)
+  }
+
+  if (request.state === 'requested' && request.currentCandidateSocketId) {
+    setAnalystBusy(request.currentCandidateSocketId, false)
+  }
+
+  consultRequests.delete(request.id)
+}
+
+function completeConsult(request: ConsultRequest) {
+  if (request.state === 'completed') {
+    return
+  }
+
+  request.state = 'completed'
+  request.completedAt = new Date().toISOString()
+  logCompletedConsult(request)
+
+  if (request.timeout) {
+    clearTimeout(request.timeout)
+    request.timeout = null
+  }
+
+  if (request.giverSocketId) {
+    startAnalystCooldown(request.giverSocketId)
+    io.to(request.giverSocketId).emit('consult-giver-state', {
+      status: 'completed',
+      requestId: request.id,
+    })
+  }
+
+  io.to(request.requesterSocketId).emit('consult-request-status', {
+    status: 'completed',
+    requestId: request.id,
+    completedAt: request.completedAt,
+  })
+
+  consultRequests.delete(request.id)
+}
+
 // Consult Ping Functions
 
 function selectNextAnalyst(request: ConsultRequest) {
   for (const tier of onlineAnalysts){
     const available = tier.filter((analyst) => {
-      return analyst.socketId !== request.requesterSocketId && !request.attemptedSocketIds.has(analyst.socketId)
+      return analyst.socketId !== request.requesterSocketId
+        && !analyst.busy
+        && !request.attemptedSocketIds.has(analyst.socketId)
     })
       if(available.length > 0) {
         const index = Math.floor(Math.random() * available.length)
@@ -69,16 +560,18 @@ function selectNextAnalyst(request: ConsultRequest) {
 }
 
 function offerConsultRequest(request: ConsultRequest){
+  request.state = 'requested'
   const selected = selectNextAnalyst(request)
 
   if(!selected){
     io.to(request.requesterSocketId).emit('consult-request-status', {status: 'no-available'})
-    consultRequests.delete(request.id)
+    stopConsultRequest(request)
     return
   }
 
   request.currentCandidateSocketId = selected.socketId
   request.attemptedSocketIds.add(selected.socketId)
+  setAnalystBusy(selected.socketId, true)
 
   io.to(selected.socketId).emit('consult-requested', {
     requestId: request.id,
@@ -89,12 +582,13 @@ function offerConsultRequest(request: ConsultRequest){
   })
 
   request.timeout = setTimeout(() => {
+    setAnalystBusy(selected.socketId, false)
     io.to(selected.socketId).emit('consult-request-expired', {
       requestId: request.id
     }) 
     offerConsultRequest(request)
 
-  }, 2000)
+  }, 20000)
 }
 
 
@@ -103,9 +597,12 @@ io.on('connection', (socket) => {
   console.log(`User connected: ${socket.id}`)
 
   socket.on('register-analyst', (analystInfo: AnalystInfo) => {
-    removeAnalyst(socket.id)
+    const existingAnalyst = removeAnalyst(socket.id)
+    const existingAnalystByHandle = removeAnalystByHandle(analystInfo.handle)
     addAnalyst({
       socketId: socket.id,
+      busy: existingAnalyst?.busy ?? existingAnalystByHandle?.busy ?? false,
+      cooldownTimeout: existingAnalyst?.cooldownTimeout ?? existingAnalystByHandle?.cooldownTimeout ?? null,
       ...analystInfo,
     })
     console.log('Online analysts:', onlineAnalysts)
@@ -126,25 +623,61 @@ io.on('connection', (socket) => {
   })
     
   socket.on('disconnect', () => {
-    removeAnalyst(socket.id)
+    const disconnectedAnalyst = removeAnalyst(socket.id)
+
+    if (disconnectedAnalyst?.cooldownTimeout) {
+      clearTimeout(disconnectedAnalyst.cooldownTimeout)
+    }
+
+    for (const request of Array.from(consultRequests.values())) {
+      if (request.requesterSocketId === socket.id) {
+        if (request.state === 'ongoing') {
+          completeConsult(request)
+        } else {
+          stopConsultRequest(request)
+        }
+      } else if (request.currentCandidateSocketId === socket.id) {
+        if (request.timeout) {
+          clearTimeout(request.timeout)
+          request.timeout = null
+        }
+
+        if (request.state === 'requested') {
+          offerConsultRequest(request)
+        } else {
+          completeConsult(request)
+        }
+      }
+    }
+
     console.log(`User disconnected: ${socket.id}`)
     console.log('Online analysts:', onlineAnalysts)
   })
 
-  socket.on('request-consult', ({requesterName, requesterLocX, requesterLocY, topic}) => {
+  socket.on('request-consult', ({requesterName, requesterHandle, requesterLocX, requesterLocY, topic}) => {
     //When the client calls a consult request, create the consult object and begin searching for the consult giver.
     const request = {
       id: randomUUID(),
+      state: 'requested' as const,
       requesterSocketId: socket.id,
+      requesterHandle,
       requesterName,
       requesterLocX,
       requesterLocY,
       topic,
       attemptedSocketIds: new Set<string>(),
       currentCandidateSocketId: null,
+      giverSocketId: null,
+      giverHandle: null,
+      startedAt: null,
+      completedAt: null,
       timeout: null
     }
     consultRequests.set(request.id, request)
+    io.to(socket.id).emit('consult-request-status', {
+      status: 'requested',
+      requestId: request.id,
+    })
     offerConsultRequest(request)
   })
 
@@ -159,12 +692,54 @@ io.on('connection', (socket) => {
       request.timeout = null
     }
     if(!accepted){
+      setAnalystBusy(socket.id, false)
       offerConsultRequest(request)
       return
     }
+
+    const analyst = findAnalyst(socket.id)
+
+    if (!analyst) {
+      offerConsultRequest(request)
+      return
+    }
+
+    request.state = 'ongoing'
+    request.giverSocketId = socket.id
+    request.giverHandle = analyst.handle
+    request.startedAt = new Date().toISOString()
+
     io.to(request.requesterSocketId).emit('consult-request-status', {
-      status: 'accepted'
+      status: 'ongoing',
+      requestId: request.id,
+      topic: request.topic,
+      startedAt: request.startedAt,
+      analyst,
     })
+
+    io.to(socket.id).emit('consult-giver-state', {
+      status: 'ongoing',
+      requestId: request.id,
+      requesterName: request.requesterName,
+      requesterLocX: request.requesterLocX,
+      requesterLocY: request.requesterLocY,
+      topic: request.topic,
+      startedAt: request.startedAt,
+    })
+  })
+
+  socket.on('complete-consult', ({ requestId }) => {
+    const request = consultRequests.get(requestId)
+
+    if (!request || request.state !== 'ongoing') {
+      return
+    }
+
+    if (request.requesterSocketId !== socket.id && request.giverSocketId !== socket.id) {
+      return
+    }
+
+    completeConsult(request)
   })
 
 })

@@ -11,12 +11,18 @@ export type AnalystInfo = {
 
 export type ConsultRequest = {
   id: string
+  state: 'requested' | 'ongoing' | 'completed'
   requesterSocketId: string
+  requesterHandle: string
   requesterName: string
-  requesterLocX: number
-  requesterLocY: number
+  requesterLocX: number | null
+  requesterLocY: number | null
   topic: string
   attemptedSocketIds: Set<string>
   currentCandidateSocketId: string | null
+  giverSocketId: string | null
+  giverHandle: string | null
+  startedAt: string | null
+  completedAt: string | null
   timeout: ReturnType<typeof setTimeout> | null
 };
