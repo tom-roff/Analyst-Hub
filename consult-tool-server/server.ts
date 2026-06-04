@@ -38,7 +38,7 @@ function ensureConsultLogExists() {
   if (!fs.existsSync(consultLogPath)) {
     fs.writeFileSync(
       consultLogPath,
-      'id,state,requester socket id,requester handle,requester name,requester location x,requester location y,giver socket id,giver handle,topic,start time,end time,attempted analyst count,attempted socket ids\n',
+      'id,state,requester socket id,requester handle,requester location x,requester location y,giver socket id,giver handle,topic,start time,end time,attempted analyst count,attempted socket ids\n',
       'utf8',
     )
   }
@@ -52,7 +52,6 @@ function logCompletedConsult(request: ConsultRequest) {
     request.state,
     request.requesterSocketId,
     request.requesterHandle,
-    request.requesterName,
     request.requesterLocX === null ? null : String(request.requesterLocX),
     request.requesterLocY === null ? null : String(request.requesterLocY),
     request.giverSocketId,
@@ -100,6 +99,7 @@ function getDashboardStatus() {
       requesterSocketId: request.requesterSocketId,
       requesterHandle: request.requesterHandle,
       requesterName: request.requesterName,
+      requesterPronouns: request.requesterPronouns,
       requesterLocation: {
         x: request.requesterLocX,
         y: request.requesterLocY,
@@ -343,7 +343,6 @@ app.get('/', (_req, res) => {
             <strong title="\${escapeHtml(analyst.name || analyst.handle)}">\${escapeHtml(analyst.name || analyst.handle)}</strong>
             <span class="pill \${statusClass}">\${statusText}</span>
             <span class="muted" title="@\${escapeHtml(analyst.handle)} \${escapeHtml(analyst.pronouns)}">@\${escapeHtml(analyst.handle)} \${escapeHtml(analyst.pronouns)}</span>
-            <span class="muted">Loc: \${escapeHtml(analyst.deskLocation?.x ?? 'n/a')}, \${escapeHtml(analyst.deskLocation?.y ?? 'n/a')}</span>
           </div>
         \`
       }
@@ -504,6 +503,8 @@ function stopConsultRequest(request: ConsultRequest) {
     clearTimeout(request.timeout)
   }
 
+  setAnalystBusy(request.requesterSocketId, false)
+
   if (request.state === 'requested' && request.currentCandidateSocketId) {
     setAnalystBusy(request.currentCandidateSocketId, false)
   }
@@ -532,6 +533,8 @@ function completeConsult(request: ConsultRequest) {
       requestId: request.id,
     })
   }
+
+  setAnalystBusy(request.requesterSocketId, false)
 
   io.to(request.requesterSocketId).emit('consult-request-status', {
     status: 'completed',
@@ -576,6 +579,7 @@ function offerConsultRequest(request: ConsultRequest){
   io.to(selected.socketId).emit('consult-requested', {
     requestId: request.id,
     requesterName: request.requesterName,
+    requesterPronouns: request.requesterPronouns,
     requesterLocX: request.requesterLocX,
     requesterLocY: request.requesterLocY,
     topic:request.topic
@@ -654,7 +658,7 @@ io.on('connection', (socket) => {
     console.log('Online analysts:', onlineAnalysts)
   })
 
-  socket.on('request-consult', ({requesterName, requesterHandle, requesterLocX, requesterLocY, topic}) => {
+  socket.on('request-consult', ({requesterName, requesterHandle, requesterPronouns, requesterLocX, requesterLocY, topic}) => {
     //When the client calls a consult request, create the consult object and begin searching for the consult giver.
     const request = {
       id: randomUUID(),
@@ -662,6 +666,7 @@ io.on('connection', (socket) => {
       requesterSocketId: socket.id,
       requesterHandle,
       requesterName,
+      requesterPronouns,
       requesterLocX,
       requesterLocY,
       topic,
@@ -674,6 +679,7 @@ io.on('connection', (socket) => {
       timeout: null
     }
     consultRequests.set(request.id, request)
+    setAnalystBusy(socket.id, true)
     io.to(socket.id).emit('consult-request-status', {
       status: 'requested',
       requestId: request.id,
@@ -721,6 +727,7 @@ io.on('connection', (socket) => {
       status: 'ongoing',
       requestId: request.id,
       requesterName: request.requesterName,
+      requesterPronouns: request.requesterPronouns,
       requesterLocX: request.requesterLocX,
       requesterLocY: request.requesterLocY,
       topic: request.topic,

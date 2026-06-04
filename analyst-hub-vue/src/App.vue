@@ -32,6 +32,7 @@ type GivenConsultStatus =
     status: 'ongoing'
     requestId: string
     requesterName: string
+    requesterPronouns: string
     requesterLocX?: number | null
     requesterLocY?: number | null
     topic: string
@@ -208,6 +209,7 @@ function handlePingRequest(topic: string) {
   socket.emit('request-consult', {
     requesterName: name.value,
     requesterHandle: handle.value,
+    requesterPronouns: pronouns.value,
     requesterLocX: deskX.value,
     requesterLocY: deskY.value,
     topic,

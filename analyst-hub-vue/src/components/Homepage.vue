@@ -6,7 +6,7 @@
         Settings
       </button>
       <button class="map-button" type="button" @click="isMapDialogOpen = true">
-        Consult Map
+        Floor Map
       </button>
     </header>
 
@@ -45,7 +45,7 @@
 
       <section v-if="givenConsultStatus.status === 'ongoing'" class="consult-state-panel">
         <h2>Current Giving Consult:</h2>
-        <h3>{{ givenConsultStatus.requesterName }}</h3>
+        <h3>{{ givenConsultStatus.requesterName }} <span v-if="givenConsultStatus.requesterPronouns">({{ givenConsultStatus.requesterPronouns }})</span></h3>
         <h3>{{ givenConsultStatus.topic }} Consult</h3>
         <div
           v-if="givenConsultStatus.requesterLocX != null && givenConsultStatus.requesterLocY != null"
@@ -68,7 +68,7 @@
         </div>
         <p v-else>Requester location unavailable.</p>
         <button type="button" @click="emit('completeConsult', givenConsultStatus.requestId)">
-          Consult is Complete
+          Mark Consult as Completed
         </button>
       </section>
     </main>
@@ -110,7 +110,7 @@
     <div v-if="isMapDialogOpen" class="modal-backdrop">
       <section class="map-dialog" aria-modal="true" role="dialog">
         <div class="map-dialog-header">
-          <h2>Consult Map</h2>
+          <h2>Floor Map</h2>
           <button type="button" @click="isMapDialogOpen = false">Close</button>
         </div>
         <img
@@ -171,6 +171,7 @@ const props = defineProps<{
       status: 'ongoing'
       requestId: string
       requesterName: string
+      requesterPronouns: string
       requesterLocX?: number | null
       requesterLocY?: number | null
       topic: string

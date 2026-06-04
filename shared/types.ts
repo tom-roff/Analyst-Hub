@@ -15,6 +15,7 @@ export type ConsultRequest = {
   requesterSocketId: string
   requesterHandle: string
   requesterName: string
+  requesterPronouns: string
   requesterLocX: number | null
   requesterLocY: number | null
   topic: string
