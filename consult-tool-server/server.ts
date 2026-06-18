@@ -24,7 +24,18 @@ const consultRequests = new Map<string, ConsultRequest>()
 const consultLogPath = path.join(__dirname, 'consults.csv')
 
 const app = express()
-app.use(cors())
+const configuredClientOrigins = (
+  process.env.CLIENT_ORIGINS
+  ?? process.env.CLIENT_ORIGIN
+  ?? 'http://localhost:5173'
+)
+  .split(',')
+  .map((origin) => origin.trim().replace(/\/$/, ''))
+  .filter(Boolean)
+
+app.use(cors({
+  origin: configuredClientOrigins,
+}))
 app.use(express.json())
 
 const priorityTierLabels = [
@@ -404,11 +415,10 @@ app.get('/', (_req, res) => {
 })
 
 const server = http.createServer(app)
-const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN ?? 'http://localhost:5173'
 
 const io = new Server(server, {
   cors: {
-    origin: CLIENT_ORIGIN,
+    origin: configuredClientOrigins,
     methods: ['GET', 'POST'],
   },
 })
@@ -901,4 +911,5 @@ io.on('connection', (socket) => {
 const PORT = Number(process.env.PORT ?? 3000)
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`)
+  console.log(`Allowed client origins: ${configuredClientOrigins.join(', ')}`)
 })
