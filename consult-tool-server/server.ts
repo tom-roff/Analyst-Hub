@@ -13,6 +13,11 @@ type OnlineAnalyst = AnalystInfo & {
   cooldownTimeout: ReturnType<typeof setTimeout> | null;
 }
 
+type PendingDisconnect = {
+  analyst: OnlineAnalyst;
+  timeout: ReturnType<typeof setTimeout>;
+}
+
 
 
 const consultRequests = new Map<string, ConsultRequest>()
@@ -410,6 +415,11 @@ const io = new Server(server, {
 const onlineAnalysts: OnlineAnalyst[][] = [[], [], [], [], []]
 const CONSULT_COOLDOWN_ENABLED = false
 const CONSULT_COOLDOWN_MS = 5 * 60 * 1000
+const MAX_CONSULT_DURATION_MS = 30 * 60 * 1000
+const RECONNECT_GRACE_MS = 5000
+const MAX_CONSECUTIVE_MISSED_CONSULTS = 3
+const pendingDisconnects = new Map<string, PendingDisconnect>()
+const missedConsultCounts = new Map<string, number>()
 
 function getPriorityTier(priority: number) {
   return priority >= 0 && priority <= 4 ? priority : 2
@@ -433,6 +443,21 @@ function addAnalyst(analyst: OnlineAnalyst) {
   onlineAnalysts[priorityTier].push({
     ...analyst,
     priority: priorityTier,
+  })
+}
+
+function forceAnalystDoNotDisturb(analyst: OnlineAnalyst) {
+  removeAnalyst(analyst.socketId)
+  addAnalyst({
+    ...analyst,
+    priority: 4,
+    busy: false,
+  })
+
+  io.to(analyst.socketId).emit('analyst-priority-forced', {
+    priority: 4,
+    reason: 'missed-consults',
+    missedConsultCount: MAX_CONSECUTIVE_MISSED_CONSULTS,
   })
 }
 
@@ -486,6 +511,18 @@ function findAnalyst(socketId: string) {
   return null
 }
 
+function findAnalystByHandle(handle: string) {
+  for (const priorityTier of onlineAnalysts) {
+    const analyst = priorityTier.find((onlineAnalyst) => onlineAnalyst.handle === handle)
+
+    if (analyst) {
+      return analyst
+    }
+  }
+
+  return null
+}
+
 function removeAnalystByHandle(handle: string) {
   for (const priorityTier of onlineAnalysts) {
     const analystIndex = priorityTier.findIndex((analyst) => analyst.handle === handle)
@@ -498,9 +535,60 @@ function removeAnalystByHandle(handle: string) {
   return null
 }
 
+function restoreConsultState(handle: string, previousSocketId: string, newSocketId: string) {
+  for (const request of consultRequests.values()) {
+    if (request.requesterHandle === handle) {
+      request.requesterSocketId = newSocketId
+
+      if (request.state === 'requested') {
+        io.to(newSocketId).emit('consult-request-status', {
+          status: 'requested',
+          requestId: request.id,
+        })
+      }
+
+      if (request.state === 'ongoing' && request.startedAt) {
+        const giver = request.giverHandle ? findAnalystByHandle(request.giverHandle) : null
+
+        if (giver) {
+          io.to(newSocketId).emit('consult-request-status', {
+            status: 'ongoing',
+            requestId: request.id,
+            topic: request.topic,
+            startedAt: request.startedAt,
+            analyst: giver,
+          })
+        }
+      }
+    }
+
+    if (request.giverHandle === handle && request.state === 'ongoing' && request.startedAt) {
+      request.giverSocketId = newSocketId
+      request.currentCandidateSocketId = newSocketId
+
+      io.to(newSocketId).emit('consult-giver-state', {
+        status: 'ongoing',
+        requestId: request.id,
+        requesterName: request.requesterName,
+        requesterPronouns: request.requesterPronouns,
+        requesterLocX: request.requesterLocX,
+        requesterLocY: request.requesterLocY,
+        topic: request.topic,
+        startedAt: request.startedAt,
+      })
+    } else if (request.currentCandidateSocketId === previousSocketId && request.state === 'requested') {
+      request.currentCandidateSocketId = newSocketId
+    }
+  }
+}
+
 function stopConsultRequest(request: ConsultRequest) {
   if (request.timeout) {
     clearTimeout(request.timeout)
+  }
+
+  if (request.consultTimeout) {
+    clearTimeout(request.consultTimeout)
   }
 
   setAnalystBusy(request.requesterSocketId, false)
@@ -526,6 +614,11 @@ function completeConsult(request: ConsultRequest) {
     request.timeout = null
   }
 
+  if (request.consultTimeout) {
+    clearTimeout(request.consultTimeout)
+    request.consultTimeout = null
+  }
+
   if (request.giverSocketId) {
     startAnalystCooldown(request.giverSocketId)
     io.to(request.giverSocketId).emit('consult-giver-state', {
@@ -548,7 +641,7 @@ function completeConsult(request: ConsultRequest) {
 // Consult Ping Functions
 
 function selectNextAnalyst(request: ConsultRequest) {
-  for (const tier of onlineAnalysts){
+  for (const tier of onlineAnalysts.slice(0, 4)){
     const available = tier.filter((analyst) => {
       return analyst.socketId !== request.requesterSocketId
         && !analyst.busy
@@ -586,7 +679,16 @@ function offerConsultRequest(request: ConsultRequest){
   })
 
   request.timeout = setTimeout(() => {
-    setAnalystBusy(selected.socketId, false)
+    const missedCount = (missedConsultCounts.get(selected.handle) ?? 0) + 1
+
+    missedConsultCounts.set(selected.handle, missedCount)
+
+    if (missedCount >= MAX_CONSECUTIVE_MISSED_CONSULTS) {
+      forceAnalystDoNotDisturb(selected)
+    } else {
+      setAnalystBusy(selected.socketId, false)
+    }
+
     io.to(selected.socketId).emit('consult-request-expired', {
       requestId: request.id
     }) 
@@ -603,12 +705,26 @@ io.on('connection', (socket) => {
   socket.on('register-analyst', (analystInfo: AnalystInfo) => {
     const existingAnalyst = removeAnalyst(socket.id)
     const existingAnalystByHandle = removeAnalystByHandle(analystInfo.handle)
+    const pendingDisconnect = pendingDisconnects.get(analystInfo.handle)
+
+    if (pendingDisconnect) {
+      clearTimeout(pendingDisconnect.timeout)
+      pendingDisconnects.delete(analystInfo.handle)
+    }
+
+    const previousAnalyst = existingAnalyst ?? existingAnalystByHandle ?? pendingDisconnect?.analyst
+
     addAnalyst({
       socketId: socket.id,
-      busy: existingAnalyst?.busy ?? existingAnalystByHandle?.busy ?? false,
-      cooldownTimeout: existingAnalyst?.cooldownTimeout ?? existingAnalystByHandle?.cooldownTimeout ?? null,
+      busy: previousAnalyst?.busy ?? false,
+      cooldownTimeout: previousAnalyst?.cooldownTimeout ?? null,
       ...analystInfo,
     })
+
+    if (previousAnalyst && previousAnalyst.socketId !== socket.id) {
+      restoreConsultState(analystInfo.handle, previousAnalyst.socketId, socket.id)
+    }
+
     console.log('Online analysts:', onlineAnalysts)
   })
 
@@ -616,6 +732,8 @@ io.on('connection', (socket) => {
     const analyst = removeAnalyst(socket.id)
 
     if (analyst) {
+      missedConsultCounts.set(handle, 0)
+
       addAnalyst({
         ...analyst,
         handle,
@@ -629,33 +747,52 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     const disconnectedAnalyst = removeAnalyst(socket.id)
 
-    if (disconnectedAnalyst?.cooldownTimeout) {
-      clearTimeout(disconnectedAnalyst.cooldownTimeout)
+    if (!disconnectedAnalyst) {
+      return
     }
 
-    for (const request of Array.from(consultRequests.values())) {
-      if (request.requesterSocketId === socket.id) {
-        if (request.state === 'ongoing') {
-          completeConsult(request)
-        } else {
-          stopConsultRequest(request)
-        }
-      } else if (request.currentCandidateSocketId === socket.id) {
-        if (request.timeout) {
-          clearTimeout(request.timeout)
-          request.timeout = null
-        }
+    const existingPendingDisconnect = pendingDisconnects.get(disconnectedAnalyst.handle)
 
-        if (request.state === 'requested') {
-          offerConsultRequest(request)
-        } else {
-          completeConsult(request)
+    if (existingPendingDisconnect) {
+      clearTimeout(existingPendingDisconnect.timeout)
+    }
+
+    const timeout = setTimeout(() => {
+      pendingDisconnects.delete(disconnectedAnalyst.handle)
+
+      if (disconnectedAnalyst.cooldownTimeout) {
+        clearTimeout(disconnectedAnalyst.cooldownTimeout)
+      }
+
+      for (const request of Array.from(consultRequests.values())) {
+        if (request.requesterSocketId === socket.id) {
+          if (request.state === 'ongoing') {
+            completeConsult(request)
+          } else {
+            stopConsultRequest(request)
+          }
+        } else if (request.currentCandidateSocketId === socket.id) {
+          if (request.timeout) {
+            clearTimeout(request.timeout)
+            request.timeout = null
+          }
+
+          if (request.state === 'requested') {
+            offerConsultRequest(request)
+          } else {
+            completeConsult(request)
+          }
         }
       }
-    }
 
-    console.log(`User disconnected: ${socket.id}`)
-    console.log('Online analysts:', onlineAnalysts)
+      console.log(`User disconnected: ${socket.id}`)
+      console.log('Online analysts:', onlineAnalysts)
+    }, RECONNECT_GRACE_MS)
+
+    pendingDisconnects.set(disconnectedAnalyst.handle, {
+      analyst: disconnectedAnalyst,
+      timeout,
+    })
   })
 
   socket.on('request-consult', ({requesterName, requesterHandle, requesterPronouns, requesterLocX, requesterLocY, topic}) => {
@@ -676,7 +813,8 @@ io.on('connection', (socket) => {
       giverHandle: null,
       startedAt: null,
       completedAt: null,
-      timeout: null
+      timeout: null,
+      consultTimeout: null
     }
     consultRequests.set(request.id, request)
     setAnalystBusy(socket.id, true)
@@ -689,10 +827,16 @@ io.on('connection', (socket) => {
 
   socket.on('respond-to-consult-request', ({requestId, accepted}) => {
     const request = consultRequests.get(requestId)
+    const respondingAnalyst = findAnalyst(socket.id)
 
     if(!request || request.currentCandidateSocketId !== socket.id){
       return
     }
+
+    if (respondingAnalyst) {
+      missedConsultCounts.set(respondingAnalyst.handle, 0)
+    }
+
     if (request.timeout){
       clearTimeout(request.timeout)
       request.timeout = null
@@ -714,6 +858,9 @@ io.on('connection', (socket) => {
     request.giverSocketId = socket.id
     request.giverHandle = analyst.handle
     request.startedAt = new Date().toISOString()
+    request.consultTimeout = setTimeout(() => {
+      completeConsult(request)
+    }, MAX_CONSULT_DURATION_MS)
 
     io.to(request.requesterSocketId).emit('consult-request-status', {
       status: 'ongoing',

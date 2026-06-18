@@ -12,6 +12,9 @@
 
     <section class="greeting-panel">
       <h2>{{ greeting }}, {{ name }}</h2>
+      <p v-if="!isServerConnected" class="server-error">
+        Error Connecting to Consult Tool Server
+      </p>
       <p>{{ readinessMessage }}</p>
     </section>
 
@@ -86,6 +89,7 @@
             {{ option.label }}
           </option>
         </select>
+        <span v-if="priorityNotice" class="priority-notice">{{ priorityNotice }}</span>
       </label>
     </section>
 
@@ -144,6 +148,8 @@ const props = defineProps<{
   name: string
   handle: string
   priority: number
+  priorityNotice: string
+  isServerConnected: boolean
   incomingConsultRequest: {
     requestId: string
     requesterName: string
@@ -392,6 +398,13 @@ function handlePriorityChange(event: Event) {
   font-weight: 500;
 }
 
+.greeting-panel .server-error {
+  border-color: rgb(255 120 120 / 45%);
+  background-color: rgb(139 30 30 / 30%);
+  color: #ffffff;
+  font-weight: 700;
+}
+
 .home-actions {
   display: flex;
   flex-direction: column;
@@ -504,6 +517,17 @@ function handlePriorityChange(event: Event) {
   font-weight: lighter;
   font-size: smaller;
 } 
+
+.priority-select .priority-notice {
+  padding: 0.625rem;
+  border-left: 4px solid #8b1e1e;
+  border-radius: 4px;
+  background-color: rgb(139 30 30 / 18%);
+  color: #ffffff;
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
 
 .priority-select span {
   font-weight: 600;

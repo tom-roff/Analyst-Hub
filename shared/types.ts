@@ -26,4 +26,5 @@ export type ConsultRequest = {
   startedAt: string | null
   completedAt: string | null
   timeout: ReturnType<typeof setTimeout> | null
+  consultTimeout: ReturnType<typeof setTimeout> | null
 };

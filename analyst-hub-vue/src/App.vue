@@ -40,6 +40,12 @@ type GivenConsultStatus =
   }
   | { status: 'completed'; requestId: string }
 
+type ForcedPriorityChange = {
+  priority: number
+  reason: 'missed-consults'
+  missedConsultCount: number
+}
+
 const analyst = ref<AnalystInfoType | null>(null)
 
 const handle = ref('');
@@ -51,6 +57,8 @@ const priority = ref(2)
 const incomingConsultRequest = ref<IncomingConsultRequest | null>(null)
 const consultRequestStatus = ref<ConsultRequestStatus>({ status: 'idle' })
 const givenConsultStatus = ref<GivenConsultStatus>({ status: 'idle' })
+const priorityNotice = ref('')
+const isServerConnected = ref(socket.connected)
 const notifiedRequestIds = new Set<string>()
 let consultCompletedTimeout: ReturnType<typeof setTimeout> | null = null
 
@@ -96,6 +104,7 @@ function handleInfoSaved() {
 
 function handlePriorityChanged(newPriority: number) {
   priority.value = newPriority
+  priorityNotice.value = ''
 
   if (!analyst.value) {
     return
@@ -142,17 +151,29 @@ function notifyConsultRequest(request: IncomingConsultRequest) {
 
 onMounted(() => {
   socket.off('connect')
+  socket.off('connect_error')
+  socket.off('disconnect')
   socket.off('consult-requested')
   socket.off('consult-request-expired')
   socket.off('consult-request-status')
   socket.off('consult-giver-state')
+  socket.off('analyst-priority-forced')
 
   socket.on('connect', () => {
     console.log('Connected to backend:', socket.id)
+    isServerConnected.value = true
 
     if(handle.value){
       registerAnalystOnServer()
     }
+  })
+
+  socket.on('connect_error', () => {
+    isServerConnected.value = false
+  })
+
+  socket.on('disconnect', () => {
+    isServerConnected.value = false
   })
 
   if (socket.connected && handle.value) {
@@ -188,6 +209,25 @@ onMounted(() => {
 
   socket.on('consult-giver-state', (status: GivenConsultStatus) => {
     givenConsultStatus.value = status
+  })
+
+  socket.on('analyst-priority-forced', (change: ForcedPriorityChange) => {
+    priority.value = change.priority
+
+    if (change.reason === 'missed-consults') {
+      priorityNotice.value = `Your priority was set to Do Not Disturb after missing ${change.missedConsultCount} consult requests in a row.`
+    }
+
+    if (!analyst.value) {
+      return
+    }
+
+    analyst.value = {
+      ...analyst.value,
+      priority: change.priority,
+    }
+
+    localStorage.setItem('analystInfo', JSON.stringify(analyst.value))
   })
 })
 
@@ -244,6 +284,8 @@ function handleCompleteConsult(requestId: string) {
       :name="name"
       :handle="handle"
       :priority="priority"
+      :priorityNotice="priorityNotice"
+      :isServerConnected="isServerConnected"
       :incomingConsultRequest="incomingConsultRequest"
       :consultRequestStatus="consultRequestStatus"
       :givenConsultStatus="givenConsultStatus"
