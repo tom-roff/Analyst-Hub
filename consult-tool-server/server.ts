@@ -46,7 +46,7 @@ const priorityTierLabels = [
   'Do Not Disturb',
 ]
 
-function escapeCsvValue(value: string | null) {
+function escapeCsvValue(value: string | boolean | null) {
   return `"${String(value ?? '').replace(/"/g, '""')}"`
 }
 
@@ -70,6 +70,7 @@ function logCompletedConsult(request: ConsultRequest) {
     request.requesterHandle,
     request.requesterLocX === null ? null : String(request.requesterLocX),
     request.requesterLocY === null ? null : String(request.requesterLocY),
+    request.requesterWfhSelected,
     request.giverSocketId,
     request.giverHandle,
     request.topic,
@@ -120,6 +121,7 @@ function getDashboardStatus() {
         x: request.requesterLocX,
         y: request.requesterLocY,
       },
+      requesterWfhSelected: request.requesterWfhSelected,
       topic: request.topic,
       currentCandidateSocketId: request.currentCandidateSocketId,
       giverSocketId: request.giverSocketId,
@@ -584,6 +586,7 @@ function restoreConsultState(handle: string, previousSocketId: string, newSocket
         requesterPronouns: request.requesterPronouns,
         requesterLocX: request.requesterLocX,
         requesterLocY: request.requesterLocY,
+        requesterWfhSelected: request.requesterWfhSelected,
         topic: request.topic,
         startedAt: request.startedAt,
       })
@@ -686,6 +689,7 @@ function offerConsultRequest(request: ConsultRequest){
     requesterPronouns: request.requesterPronouns,
     requesterLocX: request.requesterLocX,
     requesterLocY: request.requesterLocY,
+    requesterWfhSelected: request.requesterWfhSelected,
     topic:request.topic
   })
 
@@ -806,7 +810,7 @@ io.on('connection', (socket) => {
     })
   })
 
-  socket.on('request-consult', ({requesterName, requesterHandle, requesterPronouns, requesterLocX, requesterLocY, topic}) => {
+  socket.on('request-consult', ({requesterName, requesterHandle, requesterPronouns, requesterLocX, requesterLocY, requesterWfhSelected, topic}) => {
     //When the client calls a consult request, create the consult object and begin searching for the consult giver.
     const request = {
       id: randomUUID(),
@@ -817,6 +821,7 @@ io.on('connection', (socket) => {
       requesterPronouns,
       requesterLocX,
       requesterLocY,
+      requesterWfhSelected,
       topic,
       attemptedSocketIds: new Set<string>(),
       currentCandidateSocketId: null,
@@ -888,6 +893,7 @@ io.on('connection', (socket) => {
       requesterPronouns: request.requesterPronouns,
       requesterLocX: request.requesterLocX,
       requesterLocY: request.requesterLocY,
+      requesterWfhSelected: request.requesterWfhSelected,
       topic: request.topic,
       startedAt: request.startedAt,
     })

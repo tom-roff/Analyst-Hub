@@ -35,6 +35,7 @@ type GivenConsultStatus =
     requesterPronouns: string
     requesterLocX?: number | null
     requesterLocY?: number | null
+    requesterWfhSelected: boolean
     topic: string
     startedAt: string
   }
@@ -53,6 +54,7 @@ const name = ref('');
 const pronouns = ref('');
 const deskX = ref<number | null>(null)
 const deskY = ref<number | null>(null)  
+const wfhSelected = ref(false);
 const priority = ref(2)
 const incomingConsultRequest = ref<IncomingConsultRequest | null>(null)
 const consultRequestStatus = ref<ConsultRequestStatus>({ status: 'idle' })
@@ -74,6 +76,7 @@ onMounted(() => {
     pronouns.value = analyst.value.pronouns
     deskX.value = analyst.value.deskLocation.x
     deskY.value = analyst.value.deskLocation.y
+    wfhSelected.value = analyst.value.wfhSelected
     priority.value = analyst.value.priority ?? 2
     analystExists.value = true
   }
@@ -90,6 +93,7 @@ function handleInfoSaved() {
     deskX.value = analyst.value.deskLocation.x
     deskY.value = analyst.value.deskLocation.y
     priority.value = analyst.value.priority ?? 2
+    wfhSelected.value = analyst.value.wfhSelected ?? false
   }
   else{
     console.error('No analyst info found in localStorage after saving.')
@@ -241,6 +245,7 @@ function registerAnalystOnServer() {
       y: deskY.value
     },
     priority: priority.value,
+    wfhSelected: wfhSelected.value
   })
 }
 
@@ -252,7 +257,8 @@ function handlePingRequest(topic: string) {
     requesterPronouns: pronouns.value,
     requesterLocX: deskX.value,
     requesterLocY: deskY.value,
-    topic,
+    requesterWfhSelected: wfhSelected.value,
+    topic
   })
 }
 

@@ -7,6 +7,7 @@ export type AnalystInfo = {
     x: number | null;
     y: number | null;
   };
+  wfhSelected: boolean;
 };
 
 export type ConsultRequest = {
@@ -18,6 +19,7 @@ export type ConsultRequest = {
   requesterPronouns: string
   requesterLocX: number | null
   requesterLocY: number | null
+  requesterWfhSelected: boolean
   topic: string
   attemptedSocketIds: Set<string>
   currentCandidateSocketId: string | null

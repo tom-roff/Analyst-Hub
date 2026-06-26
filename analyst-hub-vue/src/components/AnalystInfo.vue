@@ -27,8 +27,12 @@
       <h2>Floor Location</h2>
       <h4 style="margin: 5px; font-weight: normal;">Double click on the map where you're seated so consult givers know where to find you.</h4>
     </div>
+    <div class="wfh-div">
+      <h2>I Work From Home</h2>
+      <input type="checkbox" class="wfh-checkbox" v-model="wfhSelected">
+    </div>
 
-    <div class="map-wrapper">
+    <div :class="[wfhSelected? 'map-wrapper-wfh': 'map-wrapper']">
       <img 
         src="../assets/MapPlaceholder.png" 
         alt="Floor Map" 
@@ -43,7 +47,7 @@
         left: `${deskX * 100}%`,
         top: `${deskY * 100}%`
         }"
-    >🎯</div>
+    >{{ wfhSelected ? 'Work From Home Selected' : '🎯'}}</div>
     </div>
 
 
@@ -67,6 +71,7 @@ const pronouns = ref('');
 const deskX = ref<number | null>(null)
 const deskY = ref<number | null>(null)
 const priority = ref(2)
+const wfhSelected = ref(false);
 
 
 const notificationStatus = ref('');
@@ -91,7 +96,6 @@ function selectDeskLocation(event: MouseEvent) {
     y: yPercent,
   })
 }
-
 
 async function enableNotifications() {
   if (!('Notification' in window)) {
@@ -131,12 +135,13 @@ onMounted(() => {
     deskX.value = analyst.deskLocation?.x
     deskY.value = analyst.deskLocation?.y
     priority.value = analyst.priority ?? 2
+    wfhSelected.value = analyst.wfhSelected ?? false
   }
 })
 
 
 function saveInfo() {
-  if (deskX.value === null || deskY.value === null) {
+  if ((deskX.value === null || deskY.value === null) && !wfhSelected.value) {
     alert('Please select your floor location on the map.')
   return
   }
@@ -149,7 +154,8 @@ function saveInfo() {
   deskLocation: {
     x: deskX.value,
     y: deskY.value
-    }
+    },
+  wfhSelected: wfhSelected.value
   }
   console.log('Analyst info to save:', analyst)
   localStorage.setItem('analystInfo', JSON.stringify(analyst))
@@ -180,6 +186,18 @@ button:disabled{
   flex-direction: column;
   align-items: center;
   justify-content: center;
+}
+
+.wfh-div {
+  justify-content: center; 
+  align-content: center;
+  display: flex; 
+  gap: 10px;
+  padding-top: 5px;
+}
+.wfh-checkbox {
+  width: 25px;
+  height: 25px;
 }
 
 .fields {
@@ -224,6 +242,14 @@ button:hover {
   display: inline-block;
   margin-top: 20px;
   max-width: 100%;
+}
+
+.map-wrapper-wfh {
+  position: relative;
+  display: inline-block;
+  margin-top: 20px;
+  max-width: 100%;
+  opacity: .5;
 }
 
 .floor-map {

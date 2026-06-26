@@ -51,7 +51,7 @@
         <h3>{{ givenConsultStatus.requesterName }} <span v-if="givenConsultStatus.requesterPronouns">({{ givenConsultStatus.requesterPronouns }})</span></h3>
         <h3>{{ givenConsultStatus.topic }} Consult</h3>
         <div
-          v-if="givenConsultStatus.requesterLocX != null && givenConsultStatus.requesterLocY != null"
+          v-if="givenConsultStatus.requesterLocX != null && givenConsultStatus.requesterLocY != null && !givenConsultStatus.requesterWfhSelected"
           class="giver-map-wrapper"
         >
           <img
@@ -69,7 +69,7 @@
             &#127919;
           </div>
         </div>
-        <p v-else>Requester location unavailable.</p>
+        <p v-else>{{ givenConsultStatus.requesterName }} is Work From Home. Please contact requesting analyst over Slack to give this consult.</p>
         <button type="button" @click="emit('completeConsult', givenConsultStatus.requestId)">
           Mark Consult as Completed
         </button>
@@ -180,6 +180,7 @@ const props = defineProps<{
       requesterPronouns: string
       requesterLocX?: number | null
       requesterLocY?: number | null
+      requesterWfhSelected: boolean
       topic: string
       startedAt: string
     }
